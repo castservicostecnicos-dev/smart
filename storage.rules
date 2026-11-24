@@ -1,0 +1,82 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Bloqueio padrão global
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'ale11062@gmail.com' ||
+        request.auth.token.email == 'cast.servicostecnicos@gmail.com'
+      );
+    }
+
+    function memberPath(companyId) {
+      return /databases/ai-studio-1d642bf8-a8d2-441a-ba1c-9a57b3b15fa3/documents/companies/$(companyId)/members/$(request.auth.uid);
+    }
+
+    function isCompanyMember(companyId) {
+      return isSignedIn() && (
+        isBootstrappedAdmin() ||
+        (
+          firestore.exists(memberPath(companyId)) &&
+          firestore.get(memberPath(companyId)).data.active == true
+        )
+      );
+    }
+
+    function hasCompanyRole(companyId, allowedRoles) {
+      return isSignedIn() && (
+        isBootstrappedAdmin() ||
+        (
+          firestore.exists(memberPath(companyId)) &&
+          firestore.get(memberPath(companyId)).data.active == true &&
+          firestore.get(memberPath(companyId)).data.role in allowedRoles
+        )
+      );
+    }
+
+    function isValidUploadSizeAndType() {
+      return request.resource != null &&
+        request.resource.size > 0 &&
+        request.resource.size <= 10 * 1024 * 1024 &&
+        request.resource.contentType.matches('^(text/(xml|csv|plain)|application/(xml|pdf|json|octet-stream|vnd\\.ms-excel|vnd\\.openxmlformats-officedocument\\.spreadsheetml\\.sheet|x-ofx|ofx))$');
+    }
+
+    // Documentos e planilhas isolados por empresa e perfil de acesso
+    match /companies/{companyId}/{folder}/{fileName} {
+      allow read: if isValidId(companyId) && (
+        (folder in ['fiscal', 'financeiro', 'conciliacao'] && hasCompanyRole(companyId, ['ADMINISTRADOR', 'FINANCEIRO', 'CONSULTA'])) ||
+        (folder == 'estoque' && hasCompanyRole(companyId, ['ADMINISTRADOR', 'ESTOQUE', 'CONSULTA'])) ||
+        (folder == 'relatorios' && isCompanyMember(companyId))
+      );
+
+      allow create, update: if isValidId(companyId) &&
+        fileName.size() >= 1 && fileName.size() <= 200 &&
+        isValidUploadSizeAndType() &&
+        (
+          hasCompanyRole(companyId, ['ADMINISTRADOR']) ||
+          (folder in ['fiscal', 'financeiro', 'conciliacao', 'relatorios'] && hasCompanyRole(companyId, ['FINANCEIRO'])) ||
+          (folder in ['estoque', 'relatorios'] && hasCompanyRole(companyId, ['ESTOQUE']))
+        );
+
+      allow delete: if isValidId(companyId) &&
+        (
+          hasCompanyRole(companyId, ['ADMINISTRADOR']) ||
+          (folder in ['fiscal', 'financeiro', 'conciliacao', 'relatorios'] && hasCompanyRole(companyId, ['FINANCEIRO'])) ||
+          (folder == 'estoque' && hasCompanyRole(companyId, ['ESTOQUE']))
+        );
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Gestão Inteligente Empresarial",
+  "description": "Sistema completo de gestão empresarial para instalação, manutenção e venda de equipamentos de ar-condicionado e refrigeração.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

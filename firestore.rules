@@ -1,0 +1,876 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==================== GLOBAL HELPERS ====================
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'ale11062@gmail.com' ||
+        request.auth.token.email == 'cast.servicostecnicos@gmail.com'
+      );
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidIsoDate(val) {
+      return val is string && val.size() == 10 && val.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isOptionalString(data, field, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isValidRole(role) {
+      return role in ['ADMINISTRADOR', 'FINANCEIRO', 'ESTOQUE', 'CONSULTA'];
+    }
+
+    // ==================== MULTI-COMPANY RBAC HELPERS ====================
+    function memberDoc(companyId) {
+      return get(/databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid));
+    }
+
+    function hasMemberDoc(companyId) {
+      return isVerifiedUser() && exists(/databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid));
+    }
+
+    function isActiveCompanyMember(companyId) {
+      return isBootstrappedAdmin() || (
+        hasMemberDoc(companyId) &&
+        memberDoc(companyId).data.active == true &&
+        isValidRole(memberDoc(companyId).data.role)
+      );
+    }
+
+    function hasCompanyRole(companyId, roles) {
+      return isBootstrappedAdmin() || (
+        hasMemberDoc(companyId) &&
+        memberDoc(companyId).data.active == true &&
+        memberDoc(companyId).data.role in roles
+      );
+    }
+
+    function canReadCompany(companyId) {
+      return isActiveCompanyMember(companyId);
+    }
+
+    function canReadFinancial(companyId) {
+      return hasCompanyRole(companyId, ['ADMINISTRADOR', 'FINANCEIRO']) || (
+        hasCompanyRole(companyId, ['ESTOQUE', 'CONSULTA']) &&
+        memberDoc(companyId).data.permissions.hasAny(['financial', 'invoices', 'reconciliation'])
+      );
+    }
+
+    function canReadInventory(companyId) {
+      return hasCompanyRole(companyId, ['ADMINISTRADOR', 'ESTOQUE']) || (
+        hasCompanyRole(companyId, ['FINANCEIRO', 'CONSULTA']) &&
+        memberDoc(companyId).data.permissions.hasAny(['inventory', 'inventory-movements'])
+      );
+    }
+
+    function canReadAuditLogs(companyId) {
+      return hasCompanyRole(companyId, ['ADMINISTRADOR']) || (
+        hasCompanyRole(companyId, ['FINANCEIRO', 'ESTOQUE', 'CONSULTA']) &&
+        memberDoc(companyId).data.permissions.hasAny(['audit-logs'])
+      );
+    }
+
+    function isCompanyAdmin(companyId) {
+      return hasCompanyRole(companyId, ['ADMINISTRADOR']);
+    }
+
+    function canWriteFinancial(companyId) {
+      return hasCompanyRole(companyId, ['ADMINISTRADOR', 'FINANCEIRO']);
+    }
+
+    function canWriteInventory(companyId) {
+      return hasCompanyRole(companyId, ['ADMINISTRADOR', 'ESTOQUE']);
+    }
+
+    function canWriteOperational(companyId) {
+      return hasCompanyRole(companyId, ['ADMINISTRADOR', 'FINANCEIRO', 'ESTOQUE']);
+    }
+
+    // ==================== VALIDATION BLUEPRINTS ====================
+    function isValidUserAccount(data) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'name', 'email', 'activeCompanyId', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        isOptionalString(data, 'activeCompanyId', 64) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidUserCompanyLink(data) {
+      return data.keys().hasAll(['companyId', 'companyName', 'uid', 'role', 'active', 'updatedAt']) &&
+        data.keys().hasOnly(['companyId', 'companyName', 'uid', 'role', 'active', 'inviteId', 'updatedAt']) &&
+        isValidId(data.companyId) &&
+        data.companyName is string && data.companyName.size() >= 1 && data.companyName.size() <= 140 &&
+        isValidId(data.uid) &&
+        isValidRole(data.role) &&
+        data.active is bool &&
+        isOptionalString(data, 'inviteId', 128) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCompanyInvite(data) {
+      return data.keys().hasAll(['companyId', 'companyName', 'email', 'name', 'role', 'status', 'invitedByUid', 'invitedByEmail', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['companyId', 'companyName', 'email', 'name', 'department', 'role', 'status', 'invitedByUid', 'invitedByEmail', 'createdAt', 'updatedAt']) &&
+        isValidId(data.companyId) &&
+        data.companyName is string && data.companyName.size() >= 1 && data.companyName.size() <= 140 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        isOptionalString(data, 'department', 80) &&
+        isValidRole(data.role) &&
+        data.status in ['pendente', 'aceito', 'cancelado'] &&
+        isValidId(data.invitedByUid) &&
+        data.invitedByEmail is string && data.invitedByEmail.size() >= 3 && data.invitedByEmail.size() <= 160 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCompany(data) {
+      return data.keys().hasAll(['companyId', 'ownerId', 'razaoSocial', 'nomeFantasia', 'regimeTributario', 'diasToleranciaConciliacao', 'serieNfPadrao', 'active', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['companyId', 'ownerId', 'razaoSocial', 'nomeFantasia', 'cnpj', 'inscricaoEstadual', 'telefone', 'email', 'endereco', 'regimeTributario', 'diasToleranciaConciliacao', 'serieNfPadrao', 'active', 'createdAt', 'updatedAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.ownerId) &&
+        data.razaoSocial is string && data.razaoSocial.size() >= 1 && data.razaoSocial.size() <= 180 &&
+        data.nomeFantasia is string && data.nomeFantasia.size() >= 1 && data.nomeFantasia.size() <= 140 &&
+        isOptionalString(data, 'cnpj', 20) &&
+        isOptionalString(data, 'inscricaoEstadual', 30) &&
+        isOptionalString(data, 'telefone', 30) &&
+        isOptionalString(data, 'email', 160) &&
+        isOptionalString(data, 'endereco', 250) &&
+        data.regimeTributario in ['Simples Nacional', 'Lucro Presumido', 'Lucro Real', 'MEI'] &&
+        data.diasToleranciaConciliacao is number && data.diasToleranciaConciliacao >= 0 && data.diasToleranciaConciliacao <= 90 &&
+        data.serieNfPadrao is string && data.serieNfPadrao.size() >= 1 && data.serieNfPadrao.size() <= 10 &&
+        data.active is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCompanyMember(data) {
+      return data.keys().hasAll(['companyId', 'uid', 'name', 'email', 'role', 'active', 'permissions', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['companyId', 'uid', 'name', 'email', 'role', 'department', 'active', 'permissions', 'inviteId', 'createdAt', 'updatedAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.uid) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        isValidRole(data.role) &&
+        isOptionalString(data, 'department', 80) &&
+        data.active is bool &&
+        data.permissions is list && data.permissions.size() <= 15 &&
+        (data.permissions.size() == 0 || data.permissions[0] is string) &&
+        isOptionalString(data, 'inviteId', 128) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['companyId', 'ownerId', 'nome', 'tipoPessoa', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['companyId', 'ownerId', 'nome', 'documento', 'documentoLimpo', 'tipoPessoa', 'documentoNaoInformado', 'email', 'telefone', 'observacoes', 'createdAt', 'updatedAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.ownerId) &&
+        data.nome is string && data.nome.size() >= 1 && data.nome.size() <= 160 &&
+        isOptionalString(data, 'documento', 24) &&
+        isOptionalString(data, 'documentoLimpo', 20) &&
+        data.tipoPessoa in ['PF', 'PJ', 'NAO_IDENTIFICADO'] &&
+        (!('documentoNaoInformado' in data) || data.documentoNaoInformado is bool) &&
+        isOptionalString(data, 'email', 160) &&
+        isOptionalString(data, 'telefone', 30) &&
+        isOptionalString(data, 'observacoes', 500) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidFinancialTransaction(data) {
+      return data.keys().hasAll(['companyId', 'ownerId', 'tipo', 'descricao', 'categoria', 'contraparte', 'valor', 'dataVencimento', 'formaPagamento', 'status', 'reconciled', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['companyId', 'ownerId', 'tipo', 'descricao', 'categoria', 'contraparte', 'clienteDocumento', 'customerId', 'valor', 'dataVencimento', 'dataPagamento', 'formaPagamento', 'status', 'invoiceId', 'invoiceNumber', 'bankTransactionId', 'reconciled', 'observacoes', 'createdAt', 'updatedAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.ownerId) &&
+        data.tipo in ['receita', 'despesa'] &&
+        data.descricao is string && data.descricao.size() >= 1 && data.descricao.size() <= 200 &&
+        data.categoria is string && data.categoria.size() >= 1 && data.categoria.size() <= 80 &&
+        data.contraparte is string && data.contraparte.size() >= 1 && data.contraparte.size() <= 160 &&
+        isOptionalString(data, 'clienteDocumento', 24) &&
+        isOptionalString(data, 'customerId', 128) &&
+        data.valor is number && data.valor >= 0 &&
+        isValidIsoDate(data.dataVencimento) &&
+        (!('dataPagamento' in data) || data.dataPagamento == '' || isValidIsoDate(data.dataPagamento)) &&
+        data.formaPagamento in ['PIX', 'Boleto', 'Cartão', 'Transferência', 'Dinheiro', 'Outro'] &&
+        data.status in ['pendente', 'pago', 'atrasado', 'cancelado'] &&
+        isOptionalString(data, 'invoiceId', 128) &&
+        isOptionalString(data, 'invoiceNumber', 40) &&
+        isOptionalString(data, 'bankTransactionId', 128) &&
+        data.reconciled is bool &&
+        isOptionalString(data, 'observacoes', 500) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidInvoice(data) {
+      return data.keys().hasAll(['companyId', 'ownerId', 'numero', 'serie', 'tipo', 'clienteNome', 'valor', 'dataEmissao', 'statusRecebimento', 'valorRecebido', 'origemImportacao', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['companyId', 'ownerId', 'numero', 'serie', 'chaveAcesso', 'tipo', 'tipoOperacao', 'clienteNome', 'clienteDocumento', 'customerId', 'valor', 'dataEmissao', 'dataVencimento', 'statusRecebimento', 'valorRecebido', 'origemImportacao', 'itensResumo', 'descricaoServicos', 'storagePath', 'downloadUrl', 'createdAt', 'updatedAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.ownerId) &&
+        data.numero is string && data.numero.size() >= 1 && data.numero.size() <= 40 &&
+        data.serie is string && data.serie.size() >= 1 && data.serie.size() <= 10 &&
+        isOptionalString(data, 'chaveAcesso', 60) &&
+        data.tipo in ['NF-e', 'NFS-e', 'NFC-e'] &&
+        (!('tipoOperacao' in data) || data.tipoOperacao == 'saida') &&
+        data.clienteNome is string && data.clienteNome.size() >= 1 && data.clienteNome.size() <= 160 &&
+        isOptionalString(data, 'clienteDocumento', 24) &&
+        isOptionalString(data, 'customerId', 128) &&
+        data.valor is number && data.valor >= 0 &&
+        isValidIsoDate(data.dataEmissao) &&
+        (!('dataVencimento' in data) || data.dataVencimento == '' || isValidIsoDate(data.dataVencimento)) &&
+        data.statusRecebimento in ['pendente', 'recebida', 'parcial', 'cancelada'] &&
+        data.valorRecebido is number && data.valorRecebido >= 0 &&
+        data.origemImportacao in ['xml', 'excel', 'csv', 'pdf', 'manual'] &&
+        isOptionalString(data, 'itensResumo', 600) &&
+        isOptionalString(data, 'descricaoServicos', 300) &&
+        isOptionalString(data, 'storagePath', 360) &&
+        isOptionalString(data, 'downloadUrl', 1000) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidBankTransaction(data) {
+      return data.keys().hasAll(['companyId', 'ownerId', 'banco', 'tipo', 'descricao', 'valor', 'dataMovimento', 'statusConciliacao', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['companyId', 'ownerId', 'banco', 'conta', 'fitId', 'documentoBancario', 'nomePagador', 'cpfCnpjPagador', 'customerId', 'tipo', 'descricao', 'valor', 'dataMovimento', 'statusConciliacao', 'valorConciliado', 'invoiceId', 'invoiceNumber', 'financialTransactionId', 'origemArquivo', 'createdAt', 'updatedAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.ownerId) &&
+        data.banco is string && data.banco.size() >= 1 && data.banco.size() <= 100 &&
+        isOptionalString(data, 'conta', 50) &&
+        isOptionalString(data, 'fitId', 120) &&
+        isOptionalString(data, 'documentoBancario', 80) &&
+        isOptionalString(data, 'nomePagador', 160) &&
+        isOptionalString(data, 'cpfCnpjPagador', 24) &&
+        isOptionalString(data, 'customerId', 128) &&
+        data.tipo in ['credito', 'debito'] &&
+        data.descricao is string && data.descricao.size() >= 1 && data.descricao.size() <= 220 &&
+        data.valor is number && data.valor >= 0 &&
+        isValidIsoDate(data.dataMovimento) &&
+        data.statusConciliacao in ['nao_conciliado', 'conciliado_nf', 'conciliado_parcial', 'conciliado_financeiro', 'sem_nf_localizada'] &&
+        (!('valorConciliado' in data) || (data.valorConciliado is number && data.valorConciliado >= 0)) &&
+        isOptionalString(data, 'invoiceId', 128) &&
+        isOptionalString(data, 'invoiceNumber', 40) &&
+        isOptionalString(data, 'financialTransactionId', 128) &&
+        isOptionalString(data, 'origemArquivo', 120) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidReconciliation(data) {
+      return data.keys().hasAll(['companyId', 'ownerId', 'bankTransactionId', 'bankDescricao', 'bankValor', 'bankData', 'tipo', 'valorConciliado', 'createdAt']) &&
+        data.keys().hasOnly(['companyId', 'ownerId', 'bankTransactionId', 'bankDescricao', 'bankValor', 'bankData', 'invoiceId', 'invoiceNumber', 'financialTransactionId', 'tipo', 'valorConciliado', 'diferencaValor', 'confianca', 'justificativa', 'origemDecisao', 'grupoId', 'observacoes', 'createdAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.ownerId) &&
+        isValidId(data.bankTransactionId) &&
+        data.bankDescricao is string && data.bankDescricao.size() >= 1 && data.bankDescricao.size() <= 220 &&
+        data.bankValor is number && data.bankValor >= 0 &&
+        isValidIsoDate(data.bankData) &&
+        isOptionalString(data, 'invoiceId', 128) &&
+        isOptionalString(data, 'invoiceNumber', 40) &&
+        isOptionalString(data, 'financialTransactionId', 128) &&
+        data.tipo in ['nf', 'financeiro', 'sem_nf', 'agrupado', 'parcelado', 'rejeitado'] &&
+        data.valorConciliado is number && data.valorConciliado >= 0 &&
+        (!('diferencaValor' in data) || data.diferencaValor is number) &&
+        (!('confianca' in data) || data.confianca in ['alta', 'media', 'baixa', 'manual']) &&
+        isOptionalString(data, 'justificativa', 400) &&
+        (!('origemDecisao' in data) || data.origemDecisao in ['manual', 'ia_confirmada', 'ia_rejeitada']) &&
+        isOptionalString(data, 'grupoId', 80) &&
+        isOptionalString(data, 'observacoes', 300) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidInventoryProduct(data) {
+      return data.keys().hasAll(['companyId', 'ownerId', 'sku', 'nome', 'categoria', 'unidade', 'quantidade', 'estoqueMinimo', 'custoUnitario', 'precoVenda', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['companyId', 'ownerId', 'sku', 'nome', 'categoria', 'marca', 'modelo', 'capacidade', 'unidade', 'quantidade', 'estoqueMinimo', 'custoUnitario', 'precoVenda', 'localizacao', 'observacoes', 'origemImportacao', 'arquivoImportacao', 'createdAt', 'updatedAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.ownerId) &&
+        data.sku is string && data.sku.size() >= 1 && data.sku.size() <= 50 &&
+        data.nome is string && data.nome.size() >= 1 && data.nome.size() <= 160 &&
+        data.categoria in [
+          'Equipamento Split/Inverter',
+          'Equipamento Comercial/VRF',
+          'Refrigeração Industrial',
+          'Peças e Compressores',
+          'Tubulação e Cobre',
+          'Gás Refrigerante',
+          'Insumos de Instalação'
+        ] &&
+        isOptionalString(data, 'marca', 80) &&
+        isOptionalString(data, 'modelo', 80) &&
+        isOptionalString(data, 'capacidade', 60) &&
+        data.unidade in ['un', 'm', 'kg', 'l', 'cx', 'rl', 'pc', 'br', 'kit'] &&
+        data.quantidade is number && data.quantidade >= 0 &&
+        data.estoqueMinimo is number && data.estoqueMinimo >= 0 &&
+        data.custoUnitario is number && data.custoUnitario >= 0 &&
+        data.precoVenda is number && data.precoVenda >= 0 &&
+        isOptionalString(data, 'localizacao', 80) &&
+        isOptionalString(data, 'observacoes', 500) &&
+        (!('origemImportacao' in data) || data.origemImportacao in ['manual', 'planilha']) &&
+        isOptionalString(data, 'arquivoImportacao', 120) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidStockMovement(data) {
+      return data.keys().hasAll(['companyId', 'ownerId', 'productId', 'productName', 'productSku', 'tipo', 'motivo', 'quantidade', 'saldoAnterior', 'saldoAtual', 'custoUnitario', 'responsavel', 'dataMovimentacao', 'createdAt']) &&
+        data.keys().hasOnly(['companyId', 'ownerId', 'productId', 'productName', 'productSku', 'tipo', 'motivo', 'quantidade', 'saldoAnterior', 'saldoAtual', 'custoUnitario', 'responsavel', 'documentoReferencia', 'dataMovimentacao', 'observacoes', 'idempotencyKey', 'createdAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.ownerId) &&
+        isValidId(data.productId) &&
+        data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 160 &&
+        data.productSku is string && data.productSku.size() >= 1 && data.productSku.size() <= 50 &&
+        data.tipo in ['entrada', 'saida'] &&
+        data.motivo in ['Compra', 'Entrada de material', 'Retirada para instalação', 'Uso em manutenção', 'Venda', 'Devolução', 'Ajuste de inventário', 'Perda ou avaria', 'Instalação', 'Manutenção', 'Ajuste'] &&
+        data.quantidade is number && data.quantidade > 0 &&
+        data.saldoAnterior is number && data.saldoAnterior >= 0 &&
+        data.saldoAtual is number && data.saldoAtual >= 0 &&
+        data.custoUnitario is number && data.custoUnitario >= 0 &&
+        data.responsavel is string && data.responsavel.size() >= 1 && data.responsavel.size() <= 120 &&
+        isOptionalString(data, 'documentoReferencia', 80) &&
+        isValidIsoDate(data.dataMovimentacao) &&
+        isOptionalString(data, 'observacoes', 300) &&
+        isOptionalString(data, 'idempotencyKey', 128) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidSavedReport(data) {
+      return data.keys().hasAll(['companyId', 'ownerId', 'titulo', 'tipo', 'totalRegistros', 'valorResumo', 'createdByName', 'createdAt']) &&
+        data.keys().hasOnly(['companyId', 'ownerId', 'titulo', 'tipo', 'periodoInicio', 'periodoFim', 'totalRegistros', 'valorResumo', 'fileName', 'storagePath', 'downloadUrl', 'createdByName', 'createdAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.ownerId) &&
+        data.titulo is string && data.titulo.size() >= 1 && data.titulo.size() <= 140 &&
+        data.tipo in ['financeiro', 'notas_fiscais', 'estoque', 'conciliacao', 'geral'] &&
+        (!('periodoInicio' in data) || data.periodoInicio == '' || isValidIsoDate(data.periodoInicio)) &&
+        (!('periodoFim' in data) || data.periodoFim == '' || isValidIsoDate(data.periodoFim)) &&
+        data.totalRegistros is number && data.totalRegistros >= 0 &&
+        data.valorResumo is number &&
+        isOptionalString(data, 'fileName', 200) &&
+        isOptionalString(data, 'storagePath', 360) &&
+        isOptionalString(data, 'downloadUrl', 1000) &&
+        data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 120 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidCompanyDocument(data) {
+      return data.keys().hasAll(['companyId', 'ownerId', 'nome', 'pasta', 'contentType', 'tamanhoBytes', 'storagePath', 'downloadUrl', 'uploadedByName', 'createdAt']) &&
+        data.keys().hasOnly(['companyId', 'ownerId', 'nome', 'pasta', 'contentType', 'tamanhoBytes', 'storagePath', 'downloadUrl', 'entidadeReferenciaId', 'uploadedByName', 'createdAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.ownerId) &&
+        data.nome is string && data.nome.size() >= 1 && data.nome.size() <= 200 &&
+        data.pasta in ['fiscal', 'financeiro', 'conciliacao', 'estoque', 'relatorios'] &&
+        data.contentType is string && data.contentType.size() >= 1 && data.contentType.size() <= 140 &&
+        data.tamanhoBytes is number && data.tamanhoBytes > 0 && data.tamanhoBytes <= 10485760 &&
+        data.storagePath is string && data.storagePath.size() >= 1 && data.storagePath.size() <= 360 &&
+        data.downloadUrl is string && data.downloadUrl.size() >= 1 && data.downloadUrl.size() <= 1000 &&
+        isOptionalString(data, 'entidadeReferenciaId', 128) &&
+        data.uploadedByName is string && data.uploadedByName.size() >= 1 && data.uploadedByName.size() <= 120 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['companyId', 'ownerId', 'userEmail', 'userName', 'modulo', 'acao', 'resumo', 'createdAt']) &&
+        data.keys().hasOnly(['companyId', 'ownerId', 'userEmail', 'userName', 'modulo', 'acao', 'entidadeId', 'resumo', 'origem', 'resultado', 'dadosAnteriores', 'dadosPosteriores', 'createdAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.ownerId) &&
+        data.userEmail is string && data.userEmail.size() >= 3 && data.userEmail.size() <= 160 &&
+        data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 120 &&
+        data.modulo is string && data.modulo.size() >= 1 && data.modulo.size() <= 60 &&
+        data.acao in ['criar', 'editar', 'excluir', 'importar', 'conciliar', 'movimentar', 'permissao', 'configurar', 'storage'] &&
+        isOptionalString(data, 'entidadeId', 128) &&
+        data.resumo is string && data.resumo.size() >= 1 && data.resumo.size() <= 300 &&
+        isOptionalString(data, 'origem', 60) &&
+        (!('resultado' in data) || data.resultado in ['sucesso', 'bloqueado', 'erro']) &&
+        isOptionalString(data, 'dadosAnteriores', 400) &&
+        isOptionalString(data, 'dadosPosteriores', 400) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidAiConversation(data) {
+      return data.keys().hasAll(['companyId', 'ownerId', 'title', 'messageCount', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['companyId', 'ownerId', 'title', 'lastMessagePreview', 'messageCount', 'createdAt', 'updatedAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.ownerId) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+        isOptionalString(data, 'lastMessagePreview', 200) &&
+        data.messageCount is number && data.messageCount >= 0 && data.messageCount <= 5000 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAiChatMessage(data) {
+      return data.keys().hasAll(['companyId', 'conversationId', 'ownerId', 'role', 'text', 'createdAt']) &&
+        data.keys().hasOnly(['companyId', 'conversationId', 'ownerId', 'role', 'text', 'actionType', 'actionSummary', 'createdAt']) &&
+        isValidId(data.companyId) &&
+        isValidId(data.conversationId) &&
+        isValidId(data.ownerId) &&
+        data.role in ['user', 'model'] &&
+        data.text is string && data.text.size() >= 1 && data.text.size() <= 8000 &&
+        (!('actionType' in data) || data.actionType in ['none', 'stock_movement_preview', 'report_preview', 'stock_movement_confirmed', 'report_saved']) &&
+        isOptionalString(data, 'actionSummary', 300) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidInviteAcceptance(inviteId, companyId, role) {
+      return inviteId is string &&
+        isValidId(inviteId) &&
+        exists(/databases/$(database)/documents/invites/$(inviteId)) &&
+        get(/databases/$(database)/documents/invites/$(inviteId)).data.status == 'pendente' &&
+        get(/databases/$(database)/documents/invites/$(inviteId)).data.companyId == companyId &&
+        get(/databases/$(database)/documents/invites/$(inviteId)).data.email == request.auth.token.email &&
+        get(/databases/$(database)/documents/invites/$(inviteId)).data.role == role;
+    }
+
+    // ==================== GLOBAL USER ACCOUNTS & INVITES ====================
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isBootstrappedAdmin());
+      allow list: if isVerifiedUser() && (
+        resource.data.uid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isValidId(userId) && isOwner(userId) && isValidUserAccount(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) && isOwner(userId) && isValidUserAccount(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'activeCompanyId', 'updatedAt']);
+      allow delete: if false;
+
+      match /companies/{companyId} {
+        allow get: if isValidId(userId) && isValidId(companyId) && (isOwner(userId) || isCompanyAdmin(companyId));
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.uid == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(companyId) && isVerifiedUser() &&
+          isValidUserCompanyLink(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().uid == userId &&
+          incoming().updatedAt == request.time &&
+          (
+            isCompanyAdmin(companyId) ||
+            (
+              isOwner(userId) &&
+              incoming().role == 'ADMINISTRADOR' &&
+              existsAfter(/databases/$(database)/documents/companies/$(companyId)) &&
+              getAfter(/databases/$(database)/documents/companies/$(companyId)).data.ownerId == request.auth.uid
+            ) ||
+            (
+              isOwner(userId) &&
+              ('inviteId' in incoming()) &&
+              isValidInviteAcceptance(incoming().inviteId, companyId, incoming().role)
+            )
+          );
+        allow update: if isValidId(userId) && isValidId(companyId) && isVerifiedUser() &&
+          isValidUserCompanyLink(incoming()) &&
+          incoming().companyId == existing().companyId &&
+          incoming().uid == existing().uid &&
+          incoming().updatedAt == request.time &&
+          isCompanyAdmin(companyId);
+        allow delete: if isValidId(userId) && isValidId(companyId) && isCompanyAdmin(companyId);
+      }
+    }
+
+    match /invites/{inviteId} {
+      allow get: if isValidId(inviteId) && isVerifiedUser() && (
+        existing().email == request.auth.token.email ||
+        isCompanyAdmin(existing().companyId)
+      );
+      allow list: if isVerifiedUser() && (
+        resource.data.email == request.auth.token.email ||
+        resource.data.invitedByUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isValidId(inviteId) && isVerifiedUser() && isValidCompanyInvite(incoming()) &&
+        incoming().status == 'pendente' &&
+        incoming().invitedByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isCompanyAdmin(incoming().companyId);
+      allow update: if isValidId(inviteId) && isVerifiedUser() && isValidCompanyInvite(incoming()) &&
+        incoming().companyId == existing().companyId &&
+        incoming().email == existing().email &&
+        incoming().invitedByUid == existing().invitedByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          (
+            existing().email == request.auth.token.email &&
+            existing().status == 'pendente' &&
+            incoming().status == 'aceito' &&
+            incoming().role == existing().role &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          ) ||
+          (
+            isCompanyAdmin(existing().companyId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'role', 'department', 'name', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(inviteId) && isVerifiedUser() && isCompanyAdmin(existing().companyId);
+    }
+
+    // ==================== MULTI-COMPANY TENANT ROOT & SUBCOLLECTIONS ====================
+    match /companies/{companyId} {
+      allow get: if isValidId(companyId) && canReadCompany(companyId);
+      allow list: if isVerifiedUser() && (
+        resource.data.ownerId == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isValidId(companyId) && isVerifiedUser() && isValidCompany(incoming()) &&
+        incoming().companyId == companyId &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(companyId) && isVerifiedUser() && isValidCompany(incoming()) &&
+        isCompanyAdmin(companyId) &&
+        incoming().companyId == existing().companyId &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['razaoSocial', 'nomeFantasia', 'cnpj', 'inscricaoEstadual', 'telefone', 'email', 'endereco', 'regimeTributario', 'diasToleranciaConciliacao', 'serieNfPadrao', 'active', 'updatedAt']);
+      allow delete: if false;
+
+      // 1. Membros da Empresa (RBAC)
+      match /members/{memberId} {
+        allow get: if isValidId(companyId) && isValidId(memberId) && isVerifiedUser() && (
+          request.auth.uid == memberId ||
+          canReadCompany(companyId)
+        );
+        allow list: if isValidId(companyId) && canReadCompany(companyId) && resource.data.companyId == companyId;
+        allow create: if isValidId(companyId) && isValidId(memberId) && isVerifiedUser() &&
+          isValidCompanyMember(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().uid == memberId &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          (
+            isCompanyAdmin(companyId) ||
+            (
+              memberId == request.auth.uid &&
+              incoming().role == 'ADMINISTRADOR' &&
+              incoming().active == true &&
+              existsAfter(/databases/$(database)/documents/companies/$(companyId)) &&
+              getAfter(/databases/$(database)/documents/companies/$(companyId)).data.ownerId == request.auth.uid
+            ) ||
+            (
+              memberId == request.auth.uid &&
+              incoming().active == true &&
+              ('inviteId' in incoming()) &&
+              isValidInviteAcceptance(incoming().inviteId, companyId, incoming().role)
+            )
+          );
+        allow update: if isValidId(companyId) && isValidId(memberId) && isVerifiedUser() &&
+          isValidCompanyMember(incoming()) &&
+          incoming().companyId == existing().companyId &&
+          incoming().uid == existing().uid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          (
+            isCompanyAdmin(companyId) ||
+            (
+              memberId == request.auth.uid &&
+              incoming().role == existing().role &&
+              incoming().active == existing().active &&
+              incoming().permissions == existing().permissions &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['name', 'department', 'updatedAt'])
+            )
+          );
+        allow delete: if isValidId(companyId) && isValidId(memberId) && isCompanyAdmin(companyId) && memberId != request.auth.uid;
+      }
+
+      // 2. Produtos e Estoque
+      match /products/{productId} {
+        allow get: if isValidId(companyId) && isValidId(productId) && canReadInventory(companyId);
+        allow list: if isValidId(companyId) && canReadInventory(companyId) && resource.data.companyId == companyId;
+        allow create: if isValidId(companyId) && isValidId(productId) && canWriteInventory(companyId) &&
+          isValidInventoryProduct(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isValidId(companyId) && isValidId(productId) && canWriteInventory(companyId) &&
+          isValidInventoryProduct(incoming()) &&
+          incoming().companyId == existing().companyId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['quantidade', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['sku', 'nome', 'categoria', 'marca', 'modelo', 'capacidade', 'unidade', 'quantidade', 'estoqueMinimo', 'custoUnitario', 'precoVenda', 'localizacao', 'observacoes', 'updatedAt'])
+          );
+        allow delete: if isValidId(companyId) && isValidId(productId) && canWriteInventory(companyId);
+      }
+
+      // 3. Movimentações de Estoque (Sincronização Atômica)
+      match /stockMovements/{movementId} {
+        allow get: if isValidId(companyId) && isValidId(movementId) && canReadInventory(companyId);
+        allow list: if isValidId(companyId) && canReadInventory(companyId) && resource.data.companyId == companyId;
+        allow create: if isValidId(companyId) && isValidId(movementId) && canWriteInventory(companyId) &&
+          isValidStockMovement(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          existsAfter(/databases/$(database)/documents/companies/$(companyId)/products/$(incoming().productId));
+        allow update, delete: if false;
+      }
+
+      // 3b. Base de Clientes (CPF/CNPJ)
+      match /customers/{customerId} {
+        allow get: if isValidId(companyId) && isValidId(customerId) && canReadFinancial(companyId);
+        allow list: if isValidId(companyId) && canReadFinancial(companyId) && resource.data.companyId == companyId;
+        allow create: if isValidId(companyId) && isValidId(customerId) && canWriteFinancial(companyId) &&
+          isValidCustomer(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isValidId(companyId) && isValidId(customerId) && canWriteFinancial(companyId) &&
+          isValidCustomer(incoming()) &&
+          incoming().companyId == existing().companyId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'documento', 'documentoLimpo', 'tipoPessoa', 'documentoNaoInformado', 'email', 'telefone', 'observacoes', 'updatedAt']);
+        allow delete: if isValidId(companyId) && isValidId(customerId) && canWriteFinancial(companyId);
+      }
+
+      // 4. Lançamentos Financeiros
+      match /financialTransactions/{transactionId} {
+        allow get: if isValidId(companyId) && isValidId(transactionId) && canReadFinancial(companyId);
+        allow list: if isValidId(companyId) && canReadFinancial(companyId) && resource.data.companyId == companyId;
+        allow create: if isValidId(companyId) && isValidId(transactionId) && canWriteFinancial(companyId) &&
+          isValidFinancialTransaction(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isValidId(companyId) && isValidId(transactionId) && canWriteFinancial(companyId) &&
+          isValidFinancialTransaction(incoming()) &&
+          incoming().companyId == existing().companyId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          (
+            isCompanyAdmin(companyId) ||
+            (
+              existing().status != 'cancelado' &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['tipo', 'descricao', 'categoria', 'contraparte', 'clienteDocumento', 'customerId', 'valor', 'dataVencimento', 'dataPagamento', 'formaPagamento', 'status', 'invoiceId', 'invoiceNumber', 'bankTransactionId', 'reconciled', 'observacoes', 'updatedAt'])
+            )
+          );
+        allow delete: if isValidId(companyId) && isValidId(transactionId) && canWriteFinancial(companyId);
+      }
+
+      // 5. Notas Fiscais
+      match /invoices/{invoiceId} {
+        allow get: if isValidId(companyId) && isValidId(invoiceId) && canReadFinancial(companyId);
+        allow list: if isValidId(companyId) && canReadFinancial(companyId) && resource.data.companyId == companyId;
+        allow create: if isValidId(companyId) && isValidId(invoiceId) && canWriteFinancial(companyId) &&
+          isValidInvoice(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isValidId(companyId) && isValidId(invoiceId) && canWriteFinancial(companyId) &&
+          isValidInvoice(incoming()) &&
+          incoming().companyId == existing().companyId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          (
+            isCompanyAdmin(companyId) ||
+            (
+              existing().statusRecebimento != 'cancelada' &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['numero', 'serie', 'chaveAcesso', 'tipo', 'tipoOperacao', 'clienteNome', 'clienteDocumento', 'customerId', 'valor', 'dataEmissao', 'dataVencimento', 'statusRecebimento', 'valorRecebido', 'itensResumo', 'descricaoServicos', 'storagePath', 'downloadUrl', 'updatedAt'])
+            )
+          );
+        allow delete: if isValidId(companyId) && isValidId(invoiceId) && canWriteFinancial(companyId);
+      }
+
+      // 6. Lançamentos Bancários
+      match /bankTransactions/{bankTxId} {
+        allow get: if isValidId(companyId) && isValidId(bankTxId) && canReadFinancial(companyId);
+        allow list: if isValidId(companyId) && canReadFinancial(companyId) && resource.data.companyId == companyId;
+        allow create: if isValidId(companyId) && isValidId(bankTxId) && canWriteFinancial(companyId) &&
+          isValidBankTransaction(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isValidId(companyId) && isValidId(bankTxId) && canWriteFinancial(companyId) &&
+          isValidBankTransaction(incoming()) &&
+          incoming().companyId == existing().companyId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['statusConciliacao', 'valorConciliado', 'invoiceId', 'invoiceNumber', 'financialTransactionId', 'nomePagador', 'cpfCnpjPagador', 'documentoBancario', 'customerId', 'descricao', 'banco', 'conta', 'updatedAt']);
+        allow delete: if isValidId(companyId) && isValidId(bankTxId) && canWriteFinancial(companyId);
+      }
+
+      // 7. Conciliações Bancárias
+      match /reconciliations/{reconciliationId} {
+        allow get: if isValidId(companyId) && isValidId(reconciliationId) && canReadFinancial(companyId);
+        allow list: if isValidId(companyId) && canReadFinancial(companyId) && resource.data.companyId == companyId;
+        allow create: if isValidId(companyId) && isValidId(reconciliationId) && canWriteFinancial(companyId) &&
+          isValidReconciliation(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          exists(/databases/$(database)/documents/companies/$(companyId)/bankTransactions/$(incoming().bankTransactionId));
+        allow update: if false;
+        allow delete: if isValidId(companyId) && isValidId(reconciliationId) && isCompanyAdmin(companyId);
+      }
+
+      // 8. Relatórios Salvos
+      match /reports/{reportId} {
+        allow get: if isValidId(companyId) && isValidId(reportId) && canReadCompany(companyId);
+        allow list: if isValidId(companyId) && canReadCompany(companyId) && resource.data.companyId == companyId;
+        allow create: if isValidId(companyId) && isValidId(reportId) && canWriteOperational(companyId) &&
+          isValidSavedReport(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time;
+        allow update: if false;
+        allow delete: if isValidId(companyId) && isValidId(reportId) && isCompanyAdmin(companyId);
+      }
+
+      // 9. Documentos e Planilhas (Metadados Firebase Storage)
+      match /documents/{documentId} {
+        allow get: if isValidId(companyId) && isValidId(documentId) && canReadCompany(companyId);
+        allow list: if isValidId(companyId) && canReadCompany(companyId) && resource.data.companyId == companyId;
+        allow create: if isValidId(companyId) && isValidId(documentId) && canWriteOperational(companyId) &&
+          isValidCompanyDocument(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          (
+            isCompanyAdmin(companyId) ||
+            (canWriteFinancial(companyId) && incoming().pasta in ['fiscal', 'financeiro', 'conciliacao', 'relatorios']) ||
+            (canWriteInventory(companyId) && incoming().pasta in ['estoque', 'relatorios'])
+          );
+        allow update: if false;
+        allow delete: if isValidId(companyId) && isValidId(documentId) && (
+          isCompanyAdmin(companyId) ||
+          (canWriteFinancial(companyId) && existing().pasta in ['fiscal', 'financeiro', 'conciliacao', 'relatorios']) ||
+          (canWriteInventory(companyId) && existing().pasta == 'estoque')
+        );
+      }
+
+      // 10. Histórico Imutável de Auditoria
+      match /auditLogs/{logId} {
+        allow get: if isValidId(companyId) && isValidId(logId) && canReadAuditLogs(companyId);
+        allow list: if isValidId(companyId) && canReadAuditLogs(companyId) && resource.data.companyId == companyId;
+        allow create: if isValidId(companyId) && isValidId(logId) && canWriteOperational(companyId) &&
+          isValidAuditLog(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      // 11. Histórico de Conversas do Assistente de IA (Privado ao usuário dentro da empresa)
+      match /aiConversations/{conversationId} {
+        allow get: if isValidId(companyId) && isValidId(conversationId) && canReadCompany(companyId) && existing().ownerId == request.auth.uid;
+        allow list: if isValidId(companyId) && canReadCompany(companyId) && resource.data.companyId == companyId && resource.data.ownerId == request.auth.uid;
+        allow create: if isValidId(companyId) && isValidId(conversationId) && isActiveCompanyMember(companyId) &&
+          isValidAiConversation(incoming()) &&
+          incoming().companyId == companyId &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isValidId(companyId) && isValidId(conversationId) && isActiveCompanyMember(companyId) &&
+          isValidAiConversation(incoming()) &&
+          existing().ownerId == request.auth.uid &&
+          incoming().companyId == existing().companyId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'lastMessagePreview', 'messageCount', 'updatedAt']);
+        allow delete: if isValidId(companyId) && isValidId(conversationId) && isActiveCompanyMember(companyId) && existing().ownerId == request.auth.uid;
+
+        match /messages/{messageId} {
+          allow get: if isValidId(companyId) && isValidId(conversationId) && isValidId(messageId) && canReadCompany(companyId) && existing().ownerId == request.auth.uid;
+          allow list: if isValidId(companyId) && isValidId(conversationId) && canReadCompany(companyId) && resource.data.companyId == companyId && resource.data.conversationId == conversationId && resource.data.ownerId == request.auth.uid;
+          allow create: if isValidId(companyId) && isValidId(conversationId) && isValidId(messageId) && isActiveCompanyMember(companyId) &&
+            isValidAiChatMessage(incoming()) &&
+            incoming().companyId == companyId &&
+            incoming().conversationId == conversationId &&
+            incoming().ownerId == request.auth.uid &&
+            incoming().createdAt == request.time &&
+            exists(/databases/$(database)/documents/companies/$(companyId)/aiConversations/$(conversationId)) &&
+            get(/databases/$(database)/documents/companies/$(companyId)/aiConversations/$(conversationId)).data.ownerId == request.auth.uid;
+          allow update: if false;
+          allow delete: if isValidId(companyId) && isValidId(conversationId) && isValidId(messageId) && isActiveCompanyMember(companyId) && existing().ownerId == request.auth.uid;
+        }
+      }
+    }
+
+    // ==================== LEGACY SINGLE-COMPANY READ-ONLY FOR ADMIN MIGRATION ====================
+    match /companySettings/{docId} {
+      allow get: if isValidId(docId) && isBootstrappedAdmin();
+      allow list: if isBootstrappedAdmin() && resource.data.companyId == 'gestao-empresarial';
+      allow write: if false;
+    }
+    match /financialTransactions/{docId} {
+      allow get: if isValidId(docId) && isBootstrappedAdmin();
+      allow list: if isBootstrappedAdmin() && resource.data.companyId == 'gestao-empresarial';
+      allow write: if false;
+    }
+    match /invoices/{docId} {
+      allow get: if isValidId(docId) && isBootstrappedAdmin();
+      allow list: if isBootstrappedAdmin() && resource.data.companyId == 'gestao-empresarial';
+      allow write: if false;
+    }
+    match /bankTransactions/{docId} {
+      allow get: if isValidId(docId) && isBootstrappedAdmin();
+      allow list: if isBootstrappedAdmin() && resource.data.companyId == 'gestao-empresarial';
+      allow write: if false;
+    }
+    match /inventory/{docId} {
+      allow get: if isValidId(docId) && isBootstrappedAdmin();
+      allow list: if isBootstrappedAdmin() && resource.data.companyId == 'gestao-empresarial';
+      allow write: if false;
+    }
+    match /stockMovements/{docId} {
+      allow get: if isValidId(docId) && isBootstrappedAdmin();
+      allow list: if isBootstrappedAdmin() && resource.data.companyId == 'gestao-empresarial';
+      allow write: if false;
+    }
+    match /auditLogs/{docId} {
+      allow get: if isValidId(docId) && isBootstrappedAdmin();
+      allow list: if isBootstrappedAdmin() && resource.data.companyId == 'gestao-empresarial';
+      allow write: if false;
+    }
+  }
+}

@@ -1,0 +1,467 @@
+{
+  "entities": {
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Conta global mínima do usuário autenticado no sistema multiempresa.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 160 },
+        "activeCompanyId": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "email", "createdAt", "updatedAt"]
+    },
+    "UserCompanyMembership": {
+      "title": "UserCompanyMembership",
+      "description": "Índice de empresas às quais o usuário possui vínculo autorizado.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "companyName": { "type": "string", "maxLength": 140 },
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "role": { "type": "string", "enum": ["ADMINISTRADOR", "FINANCEIRO", "ESTOQUE", "CONSULTA"] },
+        "active": { "type": "boolean" },
+        "inviteId": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "companyName", "uid", "role", "active", "updatedAt"]
+    },
+    "CompanyInvite": {
+      "title": "CompanyInvite",
+      "description": "Convite seguro para vinculação de usuário a uma empresa específica.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "companyName": { "type": "string", "maxLength": 140 },
+        "email": { "type": "string", "maxLength": 160 },
+        "name": { "type": "string", "maxLength": 120 },
+        "department": { "type": "string", "maxLength": 80 },
+        "role": { "type": "string", "enum": ["ADMINISTRADOR", "FINANCEIRO", "ESTOQUE", "CONSULTA"] },
+        "status": { "type": "string", "enum": ["pendente", "aceito", "cancelado"] },
+        "invitedByUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "invitedByEmail": { "type": "string", "maxLength": 160 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "companyName", "email", "name", "role", "status", "invitedByUid", "invitedByEmail", "createdAt", "updatedAt"]
+    },
+    "Company": {
+      "title": "Company",
+      "description": "Cadastro principal e parâmetros operacionais da empresa (unidade isolada multiempresa).",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "razaoSocial": { "type": "string", "maxLength": 180 },
+        "nomeFantasia": { "type": "string", "maxLength": 140 },
+        "cnpj": { "type": "string", "maxLength": 20 },
+        "inscricaoEstadual": { "type": "string", "maxLength": 30 },
+        "telefone": { "type": "string", "maxLength": 30 },
+        "email": { "type": "string", "maxLength": 160 },
+        "endereco": { "type": "string", "maxLength": 250 },
+        "regimeTributario": { "type": "string", "enum": ["Simples Nacional", "Lucro Presumido", "Lucro Real", "MEI"] },
+        "diasToleranciaConciliacao": { "type": "number" },
+        "serieNfPadrao": { "type": "string", "maxLength": 10 },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "ownerId", "razaoSocial", "nomeFantasia", "regimeTributario", "diasToleranciaConciliacao", "serieNfPadrao", "active", "createdAt", "updatedAt"]
+    },
+    "CompanyMember": {
+      "title": "CompanyMember",
+      "description": "Usuário membro de uma empresa com perfil de acesso RBAC e módulos liberados.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 160 },
+        "role": { "type": "string", "enum": ["ADMINISTRADOR", "FINANCEIRO", "ESTOQUE", "CONSULTA"] },
+        "department": { "type": "string", "maxLength": 80 },
+        "active": { "type": "boolean" },
+        "permissions": { "type": "array" },
+        "inviteId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "uid", "name", "email", "role", "active", "permissions", "createdAt", "updatedAt"]
+    },
+    "InventoryProduct": {
+      "title": "InventoryProduct",
+      "description": "Produto, equipamento de climatização/refrigeração ou insumo com saldo de estoque da empresa.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "sku": { "type": "string", "maxLength": 50 },
+        "nome": { "type": "string", "maxLength": 160 },
+        "categoria": {
+          "type": "string",
+          "enum": [
+            "Equipamento Split/Inverter",
+            "Equipamento Comercial/VRF",
+            "Refrigeração Industrial",
+            "Peças e Compressores",
+            "Tubulação e Cobre",
+            "Gás Refrigerante",
+            "Insumos de Instalação"
+          ]
+        },
+        "marca": { "type": "string", "maxLength": 80 },
+        "modelo": { "type": "string", "maxLength": 80 },
+        "capacidade": { "type": "string", "maxLength": 60 },
+        "unidade": { "type": "string", "enum": ["un", "m", "kg", "l", "cx", "rl", "pc", "br", "kit"] },
+        "quantidade": { "type": "number" },
+        "estoqueMinimo": { "type": "number" },
+        "custoUnitario": { "type": "number" },
+        "precoVenda": { "type": "number" },
+        "localizacao": { "type": "string", "maxLength": 80 },
+        "observacoes": { "type": "string", "maxLength": 500 },
+        "origemImportacao": { "type": "string", "enum": ["manual", "planilha"] },
+        "arquivoImportacao": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "ownerId", "sku", "nome", "categoria", "unidade", "quantidade", "estoqueMinimo", "custoUnitario", "precoVenda", "createdAt", "updatedAt"]
+    },
+    "StockMovement": {
+      "title": "StockMovement",
+      "description": "Movimentação atômica de entrada ou saída de estoque da empresa.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "productId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "productName": { "type": "string", "maxLength": 160 },
+        "productSku": { "type": "string", "maxLength": 50 },
+        "tipo": { "type": "string", "enum": ["entrada", "saida"] },
+        "motivo": {
+          "type": "string",
+          "enum": [
+            "Compra",
+            "Entrada de material",
+            "Retirada para instalação",
+            "Uso em manutenção",
+            "Venda",
+            "Devolução",
+            "Ajuste de inventário",
+            "Perda ou avaria",
+            "Instalação",
+            "Manutenção",
+            "Ajuste"
+          ]
+        },
+        "quantidade": { "type": "number" },
+        "saldoAnterior": { "type": "number" },
+        "saldoAtual": { "type": "number" },
+        "custoUnitario": { "type": "number" },
+        "responsavel": { "type": "string", "maxLength": 120 },
+        "documentoReferencia": { "type": "string", "maxLength": 80 },
+        "dataMovimentacao": { "type": "string", "maxLength": 10, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "observacoes": { "type": "string", "maxLength": 300 },
+        "idempotencyKey": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "ownerId", "productId", "productName", "productSku", "tipo", "motivo", "quantidade", "saldoAnterior", "saldoAtual", "custoUnitario", "responsavel", "dataMovimentacao", "createdAt"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Cadastro de clientes da empresa identificado estritamente por CPF/CNPJ ou registro manual desambiguado.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "nome": { "type": "string", "maxLength": 160 },
+        "documento": { "type": "string", "maxLength": 24 },
+        "documentoLimpo": { "type": "string", "maxLength": 20 },
+        "tipoPessoa": { "type": "string", "enum": ["PF", "PJ", "NAO_IDENTIFICADO"] },
+        "documentoNaoInformado": { "type": "boolean" },
+        "email": { "type": "string", "maxLength": 160 },
+        "telefone": { "type": "string", "maxLength": 30 },
+        "observacoes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "ownerId", "nome", "tipoPessoa", "createdAt", "updatedAt"]
+    },
+    "FinancialTransaction": {
+      "title": "FinancialTransaction",
+      "description": "Lançamento financeiro de receita ou despesa da empresa.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tipo": { "type": "string", "enum": ["receita", "despesa"] },
+        "descricao": { "type": "string", "maxLength": 200 },
+        "categoria": { "type": "string", "maxLength": 80 },
+        "contraparte": { "type": "string", "maxLength": 160 },
+        "clienteDocumento": { "type": "string", "maxLength": 24 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "valor": { "type": "number" },
+        "dataVencimento": { "type": "string", "maxLength": 10, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "dataPagamento": { "type": "string", "maxLength": 10 },
+        "formaPagamento": { "type": "string", "enum": ["PIX", "Boleto", "Cartão", "Transferência", "Dinheiro", "Outro"] },
+        "status": { "type": "string", "enum": ["pendente", "pago", "atrasado", "cancelado"] },
+        "invoiceId": { "type": "string", "maxLength": 128 },
+        "invoiceNumber": { "type": "string", "maxLength": 40 },
+        "bankTransactionId": { "type": "string", "maxLength": 128 },
+        "reconciled": { "type": "boolean" },
+        "observacoes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "ownerId", "tipo", "descricao", "categoria", "contraparte", "valor", "dataVencimento", "formaPagamento", "status", "reconciled", "createdAt", "updatedAt"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Nota fiscal de saída (NF-e / NFS-e / NFC-e) importada ou registrada para conferência de recebimentos.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "numero": { "type": "string", "maxLength": 40 },
+        "serie": { "type": "string", "maxLength": 10 },
+        "chaveAcesso": { "type": "string", "maxLength": 60 },
+        "tipo": { "type": "string", "enum": ["NF-e", "NFS-e", "NFC-e"] },
+        "tipoOperacao": { "type": "string", "enum": ["saida"] },
+        "clienteNome": { "type": "string", "maxLength": 160 },
+        "clienteDocumento": { "type": "string", "maxLength": 24 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "valor": { "type": "number" },
+        "dataEmissao": { "type": "string", "maxLength": 10, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "dataVencimento": { "type": "string", "maxLength": 10 },
+        "statusRecebimento": { "type": "string", "enum": ["pendente", "recebida", "parcial", "cancelada"] },
+        "valorRecebido": { "type": "number" },
+        "origemImportacao": { "type": "string", "enum": ["xml", "excel", "csv", "pdf", "manual"] },
+        "itensResumo": { "type": "string", "maxLength": 600 },
+        "descricaoServicos": { "type": "string", "maxLength": 300 },
+        "storagePath": { "type": "string", "maxLength": 360 },
+        "downloadUrl": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "ownerId", "numero", "serie", "tipo", "clienteNome", "valor", "dataEmissao", "statusRecebimento", "valorRecebido", "origemImportacao", "createdAt", "updatedAt"]
+    },
+    "BankTransaction": {
+      "title": "BankTransaction",
+      "description": "Lançamento bancário importado via Excel/CSV/OFX/PDF ou cadastrado manualmente.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "banco": { "type": "string", "maxLength": 100 },
+        "conta": { "type": "string", "maxLength": 50 },
+        "fitId": { "type": "string", "maxLength": 120 },
+        "documentoBancario": { "type": "string", "maxLength": 80 },
+        "nomePagador": { "type": "string", "maxLength": 160 },
+        "cpfCnpjPagador": { "type": "string", "maxLength": 24 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "tipo": { "type": "string", "enum": ["credito", "debito"] },
+        "descricao": { "type": "string", "maxLength": 220 },
+        "valor": { "type": "number" },
+        "dataMovimento": { "type": "string", "maxLength": 10, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "statusConciliacao": { "type": "string", "enum": ["nao_conciliado", "conciliado_nf", "conciliado_parcial", "conciliado_financeiro", "sem_nf_localizada"] },
+        "valorConciliado": { "type": "number" },
+        "invoiceId": { "type": "string", "maxLength": 128 },
+        "invoiceNumber": { "type": "string", "maxLength": 40 },
+        "financialTransactionId": { "type": "string", "maxLength": 128 },
+        "origemArquivo": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "ownerId", "banco", "tipo", "descricao", "valor", "dataMovimento", "statusConciliacao", "createdAt", "updatedAt"]
+    },
+    "ReconciliationRecord": {
+      "title": "ReconciliationRecord",
+      "description": "Registro formal e auditável de conciliação bancária, divisão em notas, parcelamento e decisões da IA.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "bankTransactionId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "bankDescricao": { "type": "string", "maxLength": 220 },
+        "bankValor": { "type": "number" },
+        "bankData": { "type": "string", "maxLength": 10, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "invoiceId": { "type": "string", "maxLength": 128 },
+        "invoiceNumber": { "type": "string", "maxLength": 40 },
+        "financialTransactionId": { "type": "string", "maxLength": 128 },
+        "tipo": { "type": "string", "enum": ["nf", "financeiro", "sem_nf", "agrupado", "parcelado", "rejeitado"] },
+        "valorConciliado": { "type": "number" },
+        "diferencaValor": { "type": "number" },
+        "confianca": { "type": "string", "enum": ["alta", "media", "baixa", "manual"] },
+        "justificativa": { "type": "string", "maxLength": 400 },
+        "origemDecisao": { "type": "string", "enum": ["manual", "ia_confirmada", "ia_rejeitada"] },
+        "grupoId": { "type": "string", "maxLength": 80 },
+        "observacoes": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "ownerId", "bankTransactionId", "bankDescricao", "bankValor", "bankData", "tipo", "valorConciliado", "createdAt"]
+    },
+    "SavedReport": {
+      "title": "SavedReport",
+      "description": "Relatório gerencial emitido e catalogado para a empresa.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "titulo": { "type": "string", "maxLength": 140 },
+        "tipo": { "type": "string", "enum": ["financeiro", "notas_fiscais", "estoque", "conciliacao", "geral"] },
+        "periodoInicio": { "type": "string", "maxLength": 10 },
+        "periodoFim": { "type": "string", "maxLength": 10 },
+        "totalRegistros": { "type": "number" },
+        "valorResumo": { "type": "number" },
+        "fileName": { "type": "string", "maxLength": 200 },
+        "storagePath": { "type": "string", "maxLength": 360 },
+        "downloadUrl": { "type": "string", "maxLength": 1000 },
+        "createdByName": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "ownerId", "titulo", "tipo", "totalRegistros", "valorResumo", "createdByName", "createdAt"]
+    },
+    "CompanyDocument": {
+      "title": "CompanyDocument",
+      "description": "Metadado de arquivo armazenado no Firebase Storage vinculado à empresa.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "nome": { "type": "string", "maxLength": 200 },
+        "pasta": { "type": "string", "enum": ["fiscal", "financeiro", "conciliacao", "estoque", "relatorios"] },
+        "contentType": { "type": "string", "maxLength": 140 },
+        "tamanhoBytes": { "type": "number" },
+        "storagePath": { "type": "string", "maxLength": 360 },
+        "downloadUrl": { "type": "string", "maxLength": 1000 },
+        "entidadeReferenciaId": { "type": "string", "maxLength": 128 },
+        "uploadedByName": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "ownerId", "nome", "pasta", "contentType", "tamanhoBytes", "storagePath", "downloadUrl", "uploadedByName", "createdAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Registro imutável de auditoria das operações da empresa.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userEmail": { "type": "string", "maxLength": 160 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "modulo": { "type": "string", "maxLength": 60 },
+        "acao": { "type": "string", "enum": ["criar", "editar", "excluir", "importar", "conciliar", "movimentar", "permissao", "configurar", "storage"] },
+        "entidadeId": { "type": "string", "maxLength": 128 },
+        "resumo": { "type": "string", "maxLength": 300 },
+        "origem": { "type": "string", "maxLength": 60 },
+        "resultado": { "type": "string", "enum": ["sucesso", "bloqueado", "erro"] },
+        "dadosAnteriores": { "type": "string", "maxLength": 400 },
+        "dadosPosteriores": { "type": "string", "maxLength": 400 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "ownerId", "userEmail", "userName", "modulo", "acao", "resumo", "createdAt"]
+    },
+    "AiConversation": {
+      "title": "AiConversation",
+      "description": "Histórico persistente de conversas por empresa e usuário no Assistente de IA.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "maxLength": 120 },
+        "lastMessagePreview": { "type": "string", "maxLength": 200 },
+        "messageCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "ownerId", "title", "messageCount", "createdAt", "updatedAt"]
+    },
+    "AiChatMessage": {
+      "title": "AiChatMessage",
+      "description": "Mensagens individuais de uma conversa no Assistente de IA.",
+      "type": "object",
+      "properties": {
+        "companyId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "conversationId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "role": { "type": "string", "enum": ["user", "model"] },
+        "text": { "type": "string", "maxLength": 8000 },
+        "actionType": { "type": "string", "enum": ["none", "stock_movement_preview", "report_preview", "stock_movement_confirmed", "report_saved"] },
+        "actionSummary": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyId", "conversationId", "ownerId", "role", "text", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "Conta mínima autenticada do usuário."
+    },
+    "/users/{userId}/companies/{companyId}": {
+      "schema": { "$ref": "#/entities/UserCompanyMembership" },
+      "description": "Índice de empresas autorizadas para o usuário."
+    },
+    "/invites/{inviteId}": {
+      "schema": { "$ref": "#/entities/CompanyInvite" },
+      "description": "Convites multiempresa por e-mail verificado."
+    },
+    "/companies/{companyId}": {
+      "schema": { "$ref": "#/entities/Company" },
+      "description": "Cadastro principal e configurações de cada empresa."
+    },
+    "/companies/{companyId}/members/{memberId}": {
+      "schema": { "$ref": "#/entities/CompanyMember" },
+      "description": "Usuários e perfis RBAC autorizados na empresa."
+    },
+    "/companies/{companyId}/products/{productId}": {
+      "schema": { "$ref": "#/entities/InventoryProduct" },
+      "description": "Produtos e saldos de estoque da empresa."
+    },
+    "/companies/{companyId}/stockMovements/{movementId}": {
+      "schema": { "$ref": "#/entities/StockMovement" },
+      "description": "Entradas e saídas de estoque vinculadas atomicamente aos produtos."
+    },
+    "/companies/{companyId}/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "Base de clientes da empresa com identificação por CPF/CNPJ."
+    },
+    "/companies/{companyId}/financialTransactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/FinancialTransaction" },
+      "description": "Lançamentos financeiros de receita e despesa da empresa."
+    },
+    "/companies/{companyId}/invoices/{invoiceId}": {
+      "schema": { "$ref": "#/entities/Invoice" },
+      "description": "Notas fiscais de saída da empresa."
+    },
+    "/companies/{companyId}/bankTransactions/{bankTxId}": {
+      "schema": { "$ref": "#/entities/BankTransaction" },
+      "description": "Lançamentos bancários da empresa."
+    },
+    "/companies/{companyId}/reconciliations/{reconciliationId}": {
+      "schema": { "$ref": "#/entities/ReconciliationRecord" },
+      "description": "Registros formais de conciliação da empresa."
+    },
+    "/companies/{companyId}/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/SavedReport" },
+      "description": "Relatórios gerados e catalogados da empresa."
+    },
+    "/companies/{companyId}/documents/{documentId}": {
+      "schema": { "$ref": "#/entities/CompanyDocument" },
+      "description": "Metadados de arquivos armazenados no Firebase Storage."
+    },
+    "/companies/{companyId}/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Histórico imutável de auditoria da empresa."
+    },
+    "/companies/{companyId}/aiConversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/AiConversation" },
+      "description": "Conversas salvas no Assistente de IA."
+    },
+    "/companies/{companyId}/aiConversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/AiChatMessage" },
+      "description": "Mensagens das conversas do Assistente de IA."
+    }
+  }
+}
